@@ -1,98 +1,53 @@
-# ESP32-P4 Wi-Fi & BLE Control Gateway
+# ESP32-P4 Wi-Fi & UDP Control Gateway
 
 [![Platform](https://img.shields.io/badge/platform-ESP32--P4-00979D?logo=espressif)](https://www.espressif.com/)
 [![Framework](https://img.shields.io/badge/framework-Arduino-00979D?logo=arduino)](https://www.arduino.cc/)
 [![Language](https://img.shields.io/badge/language-C%2B%2B-00599C?logo=c%2B%2B)](https://isocpp.org/)
 [![Protocol](https://img.shields.io/badge/protocol-UDP%20%7C%20HTTP-2E7D32)](#communication-architecture)
-[![License](https://img.shields.io/badge/license-not--specified-lightgrey)](#license)
 
-A compact, field-configurable ESP32-P4 control gateway that combines:
+A field-configurable ESP32-P4 gateway with Wi-Fi provisioning, UDP command control, OLED diagnostics, persistent credentials, LED control, and runtime telemetry.
 
-- Wi-Fi station-mode connectivity with persistent credentials;
-- a captive-style access-point configuration portal;
-- a UDP command interface on port `4210`;
-- remote LED control, blinking, and diagnostics;
-- an SSD1306 OLED event console over I²C;
-- a physical button for clearing credentials and restarting;
-- runtime temperature, CPU, memory, flash, network, MAC, reset, and uptime telemetry.
+The implementation is contained in [`wifi_BLE.ino`](wifi_BLE.ino).
 
-The complete implementation is contained in [`wifi_BLE.ino`](wifi_BLE.ino).
-
-> **Important:** The sketch currently uses Wi-Fi and UDP. Despite the historical `wifi_BLE.ino` filename, no Bluetooth/BLE library or BLE service is implemented in the current source.
-
----
+> **Note:** The filename is historical. The current sketch uses Wi-Fi, HTTP, and UDP; it does not currently implement a Bluetooth/BLE service.
 
 ## Contents
 
-- [System at a glance](#system-at-a-glance)
 - [Features](#features)
 - [Hardware and wiring](#hardware-and-wiring)
 - [Architecture](#architecture)
-- [Boot and configuration flow](#boot-and-configuration-flow)
+- [Boot and configuration](#boot-and-configuration)
 - [Communication architecture](#communication-architecture)
 - [UDP command reference](#udp-command-reference)
 - [Getting started](#getting-started)
-- [Testing the gateway](#testing-the-gateway)
-- [Persistent storage and reset behavior](#persistent-storage-and-reset-behavior)
-- [OLED and serial diagnostics](#oled-and-serial-diagnostics)
-- [Project structure](#project-structure)
-- [Operational notes](#operational-notes)
-- [Roadmap](#roadmap)
-- [License](#license)
-
----
-
-## System at a glance
-
-```text
-                         ┌──────────────────────────┐
-                         │        UDP client         │
-                         │  laptop / phone / host    │
-                         └────────────┬─────────────┘
-                                      │ Wi-Fi / UDP :4210
-                                      ▼
-┌──────────────┐       ┌──────────────────────────┐       ┌──────────────┐
-│ SSD1306 OLED │◄──────┤      ESP32-P4 gateway     ├──────►│ Status LED   │
-│ I²C 0x3C     │ SDA/SCL│  Wi-Fi · UDP · WebServer │ GPIO1│              │
-└──────────────┘       └───────────┬──────────────┘       └──────────────┘
-                                   │
-                         ┌─────────▼─────────┐
-                         │ Preferences (NVS) │
-                         │ SSID + password   │
-                         └─────────┬─────────┘
-                                   │
-                         ┌─────────▼─────────┐
-                         │ Reset button       │
-                         │ GPIO2 / pull-up    │
-                         └────────────────────┘
-```
+- [Testing](#testing)
+- [Storage and reset](#storage-and-reset)
+- [Diagnostics](#diagnostics)
+- [Security and operational notes](#security-and-operational-notes)
 
 ## Features
 
 | Area | Behavior |
 | --- | --- |
-| Wi-Fi onboarding | If no credentials exist, starts AP `ESP32_P4_CONFIG` at `192.168.4.1`. |
-| Credential storage | Saves `ssid` and `senha` in the `wifi` Preferences namespace. |
-| Network control | Receives newline-friendly text commands over UDP port `4210`. |
-| LED control | On, off, timed blink sequence, or continuous blinking. |
-| Diagnostics | CPU, RAM, flash, reset reason, uptime, MAC, and network information. |
-| Temperature | Reads the ESP32 internal temperature sensor when `TEMP` is requested. |
-| Local observability | Mirrors events to Serial at `115200` baud and to the OLED history buffer. |
-| Recovery | Button or `RESET_WIFI` clears saved Wi-Fi settings and restarts the device. |
+| Wi-Fi onboarding | Starts AP `ESP32_P4_CONFIG` at `192.168.4.1` when credentials are missing or connection fails. |
+| Credential storage | Stores `ssid` and `senha` in the `wifi` Preferences namespace. |
+| UDP control | Receives text commands on UDP port `4210` and replies to the sender. |
+| LED control | Supports on, off, finite blink sequences, and continuous blinking. |
+| Telemetry | Reports temperature, CPU, RAM, flash, reset reason, uptime, MAC, and network data. |
+| Local observability | Mirrors events to Serial at `115200` baud and to an SSD1306 OLED. |
+| Recovery | GPIO2 button or `RESET_WIFI` clears credentials and restarts the board. |
 
 ## Hardware and wiring
 
 ### Pin map
 
-| Function | GPIO / address | Direction | Notes |
-| --- | ---: | --- | --- |
-| Status LED | `GPIO 1` | Output | Active-high in the sketch. Use an external resistor if connecting a discrete LED. |
-| Wi-Fi reset button | `GPIO 2` | Input | Configured as `INPUT_PULLUP`; connect the button between GPIO2 and GND. |
-| OLED SDA | `GPIO 7` | I²C | Defined as `PIN_SDA`. |
-| OLED SCL | `GPIO 8` | I²C | Defined as `PIN_SCL`. |
-| OLED I²C address | `0x3C` | — | 128×64 SSD1306 display. |
-
-### Wiring schematic
+| Function | Pin / address | Configuration |
+| --- | ---: | --- |
+| Status LED | GPIO1 | Output, active-high |
+| Reset button | GPIO2 | `INPUT_PULLUP`; connect button to GND |
+| OLED SDA | GPIO7 | I²C data |
+| OLED SCL | GPIO8 | I²C clock |
+| OLED address | `0x3C` | 128×64 SSD1306 |
 
 ```text
 ESP32-P4 Dev Kit                         SSD1306 OLED
@@ -105,37 +60,38 @@ ESP32-P4 Dev Kit                         SSD1306 OLED
 
 ESP32-P4 Dev Kit
 ┌─────────────────┐
-│ GPIO1 ──[R]──► LED ──► GND             (optional external LED)
+│ GPIO1 ──[R]──► LED ──► GND             optional external LED
 │ GPIO2 ────────┐
-│               └──── Push button ───► GND
+│               └──── push button ───► GND
 └─────────────────┘
 ```
 
-> Confirm the board pinout and voltage levels before wiring. The firmware assumes a 3.3 V I²C bus and an SSD1306-compatible display at `0x3C`.
+Confirm the board pinout and voltage levels before wiring. The firmware assumes a 3.3 V I²C bus.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    A[Power on / reset] --> B[Initialize Serial, GPIO, I²C and OLED]
-    B --> C{Saved SSID present?}
-    C -- Yes --> D[Connect in WIFI_STA mode]
-    D -->|Connected| E[Start UDP listener :4210]
-    D -->|Timeout after 20 attempts| F[Start configuration AP]
-    C -- No --> F
-    F --> G[HTTP server at 192.168.4.1]
-    G --> H[POST /salvar]
+    A[Power on or reset] --> B[Initialize GPIO I2C OLED and Serial]
+    B --> C{Saved SSID exists}
+    C -->|Yes| D[Connect in station mode]
+    C -->|No| F[Start configuration AP]
+    D -->|Connected| E[Start UDP listener on port 4210]
+    D -->|Connection timeout| F
+    F --> G[Start HTTP server at 192.168.4.1]
+    G --> H[Receive WiFi form]
     H --> I[Save credentials to NVS]
-    I --> J[Restart]
+    I --> J[Restart device]
     E --> K[Main loop]
     G --> K
-    K --> L{UDP packet?}
-    L -- Yes --> M[Trim command and dispatch]
-    M --> N[Actuate LED / read diagnostics / reply]
-    K --> O{Reset button pressed?}
-    O -- Yes --> P[Clear NVS and restart]
-    K --> Q{Blink enabled?}
-    Q -- Yes --> R[Toggle LED by interval]
+    K --> L{UDP packet received}
+    L -->|Yes| M[Trim and dispatch command]
+    M --> N[Control hardware or collect telemetry]
+    N --> O[Send UDP response]
+    K --> P{Reset button pressed}
+    P -->|Yes| Q[Clear NVS and restart]
+    K --> R{Blink mode enabled}
+    R -->|Yes| S[Toggle LED when interval expires]
 ```
 
 ### Software modules
@@ -145,53 +101,55 @@ setup()
  ├─ Serial @ 115200
  ├─ GPIO configuration
  ├─ I²C + SSD1306 initialization
- └─ connectWifi() ── success ──► UDP listener
-                    failure ──► iniciarPortal()
+ └─ connectWifi()
+     ├─ success  → UDP listener
+     └─ failure  → iniciarPortal()
 
 loop()
- ├─ WebServer client handling (AP mode)
+ ├─ WebServer handling in AP mode
  ├─ UDP packet parsing
  ├─ executa_comando(command)
- ├─ physical reset-button debounce
- └─ non-blocking continuous LED blink
+ ├─ reset-button debounce
+ └─ non-blocking continuous LED blinking
 ```
 
-## Boot and configuration flow
+## Boot and configuration
 
 1. Flash and boot the sketch.
 2. The device loads `ssid` and `senha` from Preferences.
-3. With valid saved credentials, it attempts up to 20 connections at 500 ms intervals.
-4. If no credentials exist or the connection attempt fails, it starts:
+3. If credentials exist, it attempts 20 connections with a 500 ms interval.
+4. If credentials are absent or the connection fails, connect to:
    - **SSID:** `ESP32_P4_CONFIG`
    - **IP:** `192.168.4.1`
-5. Connect a phone or computer to the access point.
-6. Open `http://192.168.4.1/`.
-7. Submit the Wi-Fi SSID and password.
-8. The credentials are stored and the board restarts.
-9. After joining the LAN, send UDP commands to the board's assigned IP on port `4210`.
+5. Open `http://192.168.4.1/`.
+6. Submit the Wi-Fi SSID and password.
+7. The board stores the values and restarts.
+8. Once connected to the LAN, send UDP commands to the assigned IP on port `4210`.
 
 ## Communication architecture
 
+The following diagram intentionally uses conservative Mermaid sequence syntax for GitHub rendering.
+
 ```mermaid
 sequenceDiagram
-    participant U as User / UDP client
+    participant U as UDP client
     participant E as ESP32-P4
-    participant N as Preferences NVS
-    participant O as OLED / Serial
+    participant N as Preferences
+    participant O as OLED or Serial
 
-    U->>E: UDP command (port 4210)
+    U->>E: Send UDP command on port 4210
     E->>O: Log received command
     E->>E: Execute command
-    E->>O: Log result / event
-    E-->>U: UDP response from remote endpoint
+    E->>O: Log event or result
+    E-->>U: Send UDP response
 
-    alt First boot or missing credentials
-        E->>U: AP ESP32_P4_CONFIG
-        U->>E: GET /
-        E-->>U: Configuration HTML
-        U->>E: POST /salvar
-        E->>N: Store SSID and password
-        E-->>U: Saved; restarting
+    alt First boot
+        E->>U: Start configuration access point
+        U->>E: Request configuration page
+        E-->>U: Return HTML form
+        U->>E: Submit SSID and password
+        E->>N: Save credentials
+        E-->>U: Confirm save and restart
     end
 ```
 
@@ -201,26 +159,24 @@ Commands are plain text and are trimmed before dispatch. Responses are sent to t
 
 | Command | Description | Example response |
 | --- | --- | --- |
-| `LED_ON` | Turns the LED on continuously. | `LED ligado` |
-| `LED_OFF` | Turns the LED off. | `LED desligado` |
-| `LED_PISCA:<count>:<ms>` | Blinks a fixed number of times. | `LED piscou 5 vezes com 250 ms` |
-| `LED_BLINK:<ms>` | Starts continuous blinking at the requested interval. | `Blink iniciado (500 ms)` |
-| `TEMP` | Reads and returns internal temperature in °C. | `CPU Temp: 42.50` |
-| `CPU` | Returns chip model, revision, cores, frequency, and free heap. | Multiple lines |
-| `RAM` | Returns free, minimum free, and maximum allocatable heap. | Multiple lines |
-| `FLASH` | Returns flash size, speed, sketch size, and free sketch space. | Multiple lines |
-| `INIT` | Returns the ESP reset reason code. | `Motivo reset: ...` |
-| `UPTIME` | Returns uptime in milliseconds. | `Uptime: ... ms` |
-| `MAC` | Returns the Wi-Fi MAC address. | `MAC: ...` |
-| `NET_INFO` | Returns IP, gateway, subnet, RSSI, and SSID. | Multiple lines |
-| `RESET_WIFI` | Clears Wi-Fi Preferences, notifies the client, blinks, and restarts. | `WiFi zerado. Reiniciando...` |
+| `LED_ON` | Turn the LED on continuously. | `LED ligado` |
+| `LED_OFF` | Turn the LED off. | `LED desligado` |
+| `LED_PISCA:<count>:<ms>` | Blink a fixed number of times. | `LED piscou 5 vezes com 250 ms` |
+| `LED_BLINK:<ms>` | Start continuous blinking. | `Blink iniciado (500 ms)` |
+| `TEMP` | Read internal temperature in °C. | `CPU Temp: 42.50` |
+| `CPU` | Report chip model, revision, cores, frequency, and free heap. | Multiple lines |
+| `RAM` | Report free, minimum free, and maximum allocatable heap. | Multiple lines |
+| `FLASH` | Report flash size, speed, sketch size, and free sketch space. | Multiple lines |
+| `INIT` | Report the reset reason code. | `Motivo reset: ...` |
+| `UPTIME` | Report uptime in milliseconds. | `Uptime: ... ms` |
+| `MAC` | Report the Wi-Fi MAC address. | `MAC: ...` |
+| `NET_INFO` | Report IP, gateway, subnet, RSSI, and SSID. | Multiple lines |
+| `RESET_WIFI` | Clear Preferences, blink, and restart. | `WiFi zerado. Reiniciando...` |
 
 ### UDP examples
 
-Linux/macOS:
-
 ```bash
-# Replace 192.168.1.50 with the ESP32-P4 address
+# Replace 192.168.1.50 with the ESP32-P4 address.
 printf 'CPU\n' | nc -u -w1 192.168.1.50 4210
 printf 'LED_ON\n' | nc -u -w1 192.168.1.50 4210
 printf 'LED_BLINK:500\n' | nc -u -w1 192.168.1.50 4210
@@ -236,60 +192,55 @@ $client.Send($bytes, $bytes.Length, "192.168.1.50", 4210)
 $client.Close()
 ```
 
-> UDP is connectionless. The client must listen on the same local socket used to send the command if it expects the reply on that socket.
+> UDP is connectionless. A client expecting a response should listen on the same local socket used to send the command.
 
 ## Getting started
 
-### Required software
+### Requirements
 
-- Arduino IDE 2.x or an equivalent Arduino-compatible build environment;
-- ESP32 board support package with ESP32-P4 support;
-- a USB data cable and the appropriate ESP32-P4 board definition.
+- Arduino IDE 2.x or an equivalent Arduino-compatible environment;
+- ESP32 board support with ESP32-P4 support;
+- USB data cable;
+- SSD1306 OLED, if display output is required.
 
-### Required libraries
+### Libraries
 
-Install these libraries through the Arduino Library Manager or your preferred dependency workflow:
+Install through the Arduino Library Manager:
 
 - `Adafruit GFX Library`;
 - `Adafruit SSD1306`.
 
-The following components are supplied by the ESP32 Arduino core:
+These are provided by the ESP32 Arduino core or ESP-IDF integration:
 
-- `WiFi.h`;
-- `WiFiUdp.h`;
-- `WebServer.h`;
-- `Preferences.h`;
-- ESP-IDF temperature sensor and system headers;
-- `Wire.h`.
+- `WiFi.h`, `WiFiUdp.h`, `WebServer.h`, `Preferences.h`;
+- `Wire.h`;
+- ESP system and temperature-sensor headers.
 
 ### Build and flash
 
 1. Clone this repository.
 2. Open `wifi_BLE.ino` in Arduino IDE.
 3. Select the correct ESP32-P4 board and serial port.
-4. Install the libraries listed above.
-5. Compile the sketch.
-6. Upload it to the board.
-7. Open Serial Monitor at **115200 baud**.
-8. Follow the configuration flow described above.
+4. Install the required libraries.
+5. Compile and upload the sketch.
+6. Open Serial Monitor at **115200 baud**.
+7. Follow the configuration flow above.
 
-## Testing the gateway
+## Testing
 
-A practical acceptance test is:
-
-- [ ] OLED displays `OLED Pronto!` or the serial log reports the display failure clearly.
+- [ ] OLED displays `OLED Pronto!`, or Serial reports the display failure.
 - [ ] First boot exposes `ESP32_P4_CONFIG`.
 - [ ] `http://192.168.4.1/` loads the configuration page.
-- [ ] Credentials persist across a restart.
-- [ ] `LED_ON` and `LED_OFF` produce the expected GPIO1 state.
-- [ ] `TEMP`, `CPU`, `RAM`, `FLASH`, `INIT`, `UPTIME`, `MAC`, and `NET_INFO` return UDP responses.
+- [ ] Credentials persist across restart.
+- [ ] `LED_ON` and `LED_OFF` control GPIO1.
+- [ ] All telemetry commands return UDP responses.
 - [ ] `LED_PISCA` performs the requested finite sequence.
 - [ ] `LED_BLINK` toggles without blocking the main loop.
-- [ ] Holding GPIO2 low clears credentials and restarts the board.
+- [ ] GPIO2 clears credentials and restarts the board.
 
-## Persistent storage and reset behavior
+## Storage and reset
 
-Credentials are stored with the Arduino `Preferences` API under the `wifi` namespace:
+Credentials are stored using Arduino Preferences under the `wifi` namespace:
 
 ```text
 wifi/
@@ -297,18 +248,11 @@ wifi/
 └── senha → configured network password
 ```
 
-There are two supported reset paths:
+Credentials can be cleared by either sending `RESET_WIFI` over UDP or pressing the GPIO2 button. Both paths clear the namespace, provide a visible indication, and call `ESP.restart()`.
 
-1. Send `RESET_WIFI` over UDP.
-2. Press the button connected from GPIO2 to GND.
+## Diagnostics
 
-Both paths clear the namespace, provide a visible indication, and call `ESP.restart()`.
-
-## OLED and serial diagnostics
-
-The display is used as a rolling eight-line event console. Events are also printed to Serial with the `[OLED]` prefix, which makes the serial monitor useful even when no display is connected.
-
-Typical messages include:
+The OLED is a rolling eight-line event console. Events are also printed to Serial with the `[OLED]` prefix:
 
 ```text
 [OLED] OLED Pronto!
@@ -318,44 +262,26 @@ Typical messages include:
 [OLED] 192.168.1.50
 ```
 
-If the display is unavailable, the rest of the application continues operating and reports the failure through Serial.
+If the display is unavailable, the network and command functionality continues operating and the failure is reported through Serial.
 
 ## Project structure
 
 ```text
 .
-├── README.md       # This documentation
+├── README.md       # Project documentation
 └── wifi_BLE.ino    # ESP32-P4 firmware
 ```
 
-## Operational notes
+## Security and operational notes
 
-- The configuration AP uses a fixed SSID and no password; use it only during local commissioning.
-- UDP commands are unauthenticated. Do not expose port `4210` to an untrusted network without adding authentication and input validation.
-- The HTTP configuration page transmits credentials over plain HTTP. Use an isolated setup network or add TLS and access control for production deployments.
-- `LED_PISCA` is intentionally blocking while the finite blink sequence runs; avoid very large counts or delays in latency-sensitive applications.
-- The internal temperature sensor is a silicon temperature reading, not an ambient-temperature measurement.
-- Verify the selected board package's ESP32-P4 API compatibility for the temperature sensor driver before production use.
-- Consider adding a timeout, bounded ranges, and validation for `LED_PISCA` and `LED_BLINK` values before deploying to unattended devices.
-
-## Roadmap
-
-Potential next improvements:
-
-- Add authenticated HTTP and UDP communication.
-- Add a password to the configuration AP.
-- Rename the sketch to reflect its current Wi-Fi/UDP feature set, or implement the intended BLE service.
-- Add PlatformIO configuration and automated compilation checks.
-- Replace blocking finite LED blinking with a non-blocking state machine.
-- Add command versioning and structured JSON responses.
-- Add a formal hardware revision and tested board profile.
+- The configuration AP has a fixed SSID and no password; use it only during local commissioning.
+- UDP commands are unauthenticated. Do not expose port `4210` to an untrusted network without adding authentication.
+- The configuration page uses plain HTTP and transmits credentials without encryption. Use an isolated setup network in production.
+- `LED_PISCA` is blocking while the finite sequence runs; avoid excessive counts or delays.
+- The internal temperature sensor measures silicon temperature, not ambient temperature.
+- Validate the ESP32-P4 board package and temperature-sensor API before production deployment.
+- Consider bounded values, command versioning, and structured responses for a production protocol.
 
 ## License
 
 No license is currently specified for this repository. Add a `LICENSE` file before distributing or reusing the project publicly.
-
----
-
-<p align="center">
-  Built for observable, remotely controllable ESP32-P4 prototypes.
-</p>
