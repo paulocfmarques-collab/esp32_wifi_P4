@@ -94,11 +94,36 @@ void ProcessadorComandos::executar(String cmd) {
     }
     else if (nome == "help") {
         udp.responder(
-            "Sistema: info status version build reason help reboot reset_wifi alive lastcmd cmdcount\n"
-            "Hardware: temp cpu ram heap flash uptime\n"
-            "Rede: net_info mac rssi ip ssid\n"
-            "Hora: time date set_fuso:N\n"
-            "LED: led_on led_off led_blink[:ms] led_pisca[:n:ms]\n");
+            "COMANDOS\n"
+            "info\n"
+            "status\n"
+            "version\n"
+            "build\n"
+            "reason\n"
+            "help\n"
+            "reboot\n"
+            "reset_wifi\n"
+            "alive\n"
+            "lastcmd\n"
+            "cmdcount\n"
+            "temp\n"
+            "cpu\n"
+            "ram\n"
+            "heap\n"
+            "flash\n"
+            "uptime\n"
+            "net_info\n"
+            "mac\n"
+            "rssi\n"
+            "ip\n"
+            "ssid\n"
+            "time\n"
+            "date\n"
+            "set_fuso:N\n"
+            "led_on\n"
+            "led_off\n"
+            "led_blink[:ms]\n"
+            "led_pisca[:n:ms]\n");
     }
     else if (nome == "reset_wifi") {
         resetarSistemaFabrica();
